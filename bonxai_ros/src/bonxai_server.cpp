@@ -125,18 +125,36 @@ BonxaiServer::BonxaiServer(const rclcpp::NodeOptions& node_options)
   tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
 
   using std::chrono_literals::operator""s;
+  use_separate_free_cloud_ = declare_parameter("use_separate_free_cloud", false);
+  const int64_t cloud_sync_queue_size = declare_parameter("cloud_sync_queue_size", 100);
 #if RCLCPP_VERSION_GTE(29, 0, 0)
   // Kilted, Rolling's message_filters::Subscriber allows to take an rclcpp::QoS directly.
   point_cloud_sub_.subscribe(this, "cloud_in", rclcpp::SensorDataQoS());
+  if (use_separate_free_cloud_) {
+    free_point_cloud_sub_.subscribe(this, "free_cloud_in", rclcpp::SensorDataQoS());
+  }
 #else
   // Humble, Jazzy's message_filters::Subscriber takes an rmw_qos_profile_t, not an rclcpp::QoS.
   point_cloud_sub_.subscribe(this, "cloud_in", rclcpp::SensorDataQoS().get_rmw_qos_profile());
+  if (use_separate_free_cloud_) {
+    free_point_cloud_sub_.subscribe(
+        this, "free_cloud_in", rclcpp::SensorDataQoS().get_rmw_qos_profile());
+  }
 #endif
-  tf_point_cloud_sub_ = std::make_shared<tf2_ros::MessageFilter<PointCloud2>>(
-      point_cloud_sub_, *tf2_buffer_, world_frame_id_, 5, this->get_node_logging_interface(),
-      this->get_node_clock_interface(), 5s);
+  if (use_separate_free_cloud_) {
+    RCLCPP_INFO(
+        get_logger(), "Using separate hit and free clouds with synchronization queue size %ld",
+        cloud_sync_queue_size);
+    cloud_sync_ = std::make_shared<message_filters::Synchronizer<CloudSyncPolicy>>(
+        CloudSyncPolicy(cloud_sync_queue_size), point_cloud_sub_, free_point_cloud_sub_);
+    cloud_sync_->registerCallback(&BonxaiServer::insertCloudsCallback, this);
+  } else {
+    tf_point_cloud_sub_ = std::make_shared<tf2_ros::MessageFilter<PointCloud2>>(
+        point_cloud_sub_, *tf2_buffer_, world_frame_id_, 5, this->get_node_logging_interface(),
+        this->get_node_clock_interface(), 5s);
 
-  tf_point_cloud_sub_->registerCallback(&BonxaiServer::insertCloudCallback, this);
+    tf_point_cloud_sub_->registerCallback(&BonxaiServer::insertCloudCallback, this);
+  }
 
   reset_srv_ =
       create_service<ResetSrv>("~/reset", std::bind(&BonxaiServer::resetSrv, this, _1, _2));
@@ -192,6 +210,79 @@ void BonxaiServer::insertCloudCallback(const PointCloud2::ConstSharedPtr cloud) 
   RCLCPP_DEBUG(get_logger(), "Pointcloud insertion in Bonxai done, %f sec)", total_elapsed);
 
   publishAll(cloud->header.stamp);
+}
+
+void BonxaiServer::insertCloudsCallback(
+    const PointCloud2::ConstSharedPtr hit_cloud, const PointCloud2::ConstSharedPtr free_cloud) {
+  const auto start_time = rclcpp::Clock{}.now();
+
+  if (hit_cloud->header.frame_id != free_cloud->header.frame_id) {
+    RCLCPP_WARN(
+        get_logger(), "Hit cloud frame '%s' differs from free cloud frame '%s'; skipping scan",
+        hit_cloud->header.frame_id.c_str(), free_cloud->header.frame_id.c_str());
+    return;
+  }
+
+  PCLPointCloud hit_points;
+  PCLPointCloud free_points;
+  pcl::fromROSMsg(*hit_cloud, hit_points);
+  pcl::fromROSMsg(*free_cloud, free_points);
+
+  geometry_msgs::msg::TransformStamped sensor_to_world_transform_stamped;
+  try {
+    sensor_to_world_transform_stamped = tf2_buffer_->lookupTransform(
+        world_frame_id_, hit_cloud->header.frame_id, hit_cloud->header.stamp,
+        rclcpp::Duration::from_seconds(1.0));
+  } catch (const tf2::TransformException& ex) {
+    RCLCPP_WARN(get_logger(), "%s", ex.what());
+    return;
+  }
+
+  const Eigen::Matrix4f sensor_to_world =
+      tf2::transformToEigen(sensor_to_world_transform_stamped.transform).matrix().cast<float>();
+  pcl::transformPointCloud(hit_points, hit_points, sensor_to_world);
+  pcl::transformPointCloud(free_points, free_points, sensor_to_world);
+
+  const auto& translation = sensor_to_world_transform_stamped.transform.translation;
+  const BonxaiT::Vector3D origin(translation.x, translation.y, translation.z);
+  const double max_range_squared = max_range_ * max_range_;
+
+  auto add_point = [this, &origin, max_range_squared](const PCLPoint& point, bool hit) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
+      return;
+    }
+
+    BonxaiT::Vector3D endpoint(point.x, point.y, point.z);
+    if (max_range_ >= 0) {
+      const BonxaiT::Vector3D direction = endpoint - origin;
+      const double squared_norm = direction.squaredNorm();
+      if (squared_norm >= max_range_squared) {
+        if (squared_norm > 0) {
+          endpoint = origin + direction * (max_range_ / std::sqrt(squared_norm));
+          bonxai_->addMissPoint(endpoint);
+        }
+        return;
+      }
+    }
+
+    if (hit) {
+      bonxai_->addHitPoint(endpoint);
+    } else {
+      bonxai_->addMissPoint(endpoint);
+    }
+  };
+
+  for (const auto& point : free_points.points) {
+    add_point(point, false);
+  }
+  for (const auto& point : hit_points.points) {
+    add_point(point, true);
+  }
+  bonxai_->updateFreeCells(origin);
+
+  const double total_elapsed = (rclcpp::Clock{}.now() - start_time).seconds();
+  RCLCPP_DEBUG(get_logger(), "Paired pointcloud insertion in Bonxai done, %f sec)", total_elapsed);
+  publishAll(hit_cloud->header.stamp);
 }
 
 rcl_interfaces::msg::SetParametersResult BonxaiServer::onParameter(

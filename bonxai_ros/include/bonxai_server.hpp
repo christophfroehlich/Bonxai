@@ -16,6 +16,8 @@
 #include "bonxai_map/pcl_utils.hpp"
 #include "bonxai_map/probabilistic_map.hpp"
 #include "message_filters/subscriber.hpp"
+#include "message_filters/sync_policies/exact_time.hpp"
+#include "message_filters/synchronizer.hpp"
 #include "pcl_conversions/pcl_conversions.h"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
@@ -45,6 +47,9 @@ class BonxaiServer : public rclcpp::Node {
 
   virtual void insertCloudCallback(const PointCloud2::ConstSharedPtr cloud);
 
+  virtual void insertCloudsCallback(
+      const PointCloud2::ConstSharedPtr hit_cloud, const PointCloud2::ConstSharedPtr free_cloud);
+
  protected:
   virtual void publishAll(const rclcpp::Time& rostime);
 
@@ -55,7 +60,10 @@ class BonxaiServer : public rclcpp::Node {
 
   rclcpp::Publisher<PointCloud2>::SharedPtr point_cloud_pub_;
   message_filters::Subscriber<PointCloud2> point_cloud_sub_;
+  message_filters::Subscriber<PointCloud2> free_point_cloud_sub_;
   std::shared_ptr<tf2_ros::MessageFilter<PointCloud2>> tf_point_cloud_sub_;
+  using CloudSyncPolicy = message_filters::sync_policies::ExactTime<PointCloud2, PointCloud2>;
+  std::shared_ptr<message_filters::Synchronizer<CloudSyncPolicy>> cloud_sync_;
   // rclcpp::Service<BBoxSrv>::SharedPtr clear_bbox_srv_;
   rclcpp::Service<ResetSrv>::SharedPtr reset_srv_;
   std::shared_ptr<tf2_ros::Buffer> tf2_buffer_;
@@ -65,6 +73,7 @@ class BonxaiServer : public rclcpp::Node {
   std::vector<Bonxai::CoordT> key_ray_;
 
   double max_range_;
+  bool use_separate_free_cloud_;
   std::string world_frame_id_;  // the map frame
   std::string base_frame_id_;   // base of the robot for ground plane filtering
 

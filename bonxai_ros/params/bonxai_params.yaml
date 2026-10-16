@@ -3,6 +3,8 @@ bonxai_server_node:
     resolution: 0.02
     frame_id: "map"
     base_frame_id: "base_footprint"
+    use_separate_free_cloud: false
+    cloud_sync_queue_size: 100
 
     occupancy_min_z: -100.0
     occupancy_max_z: 100.0

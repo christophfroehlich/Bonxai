@@ -54,6 +54,10 @@ Bonxai_server builds and distributes volumetric 3D occupancy maps for obstacle a
 
 Incoming 3D point cloud for scan integration. You need to remap this topic to your sensor data and provide a tf transform between the sensor data and the static map frame. The frame_id of the point cloud has to be the sensor frame. Raytracing (clearing of free space) is always done from the origin of this frame at the time of the point cloud.
 
+`free_cloud_in (sensor_msgs/msg/PointCloud2)`
+
+Optional unfiltered point cloud used only for free-space updates when `use_separate_free_cloud` is enabled. It must have the same timestamp and frame as `cloud_in`. Points from `cloud_in` are inserted as hits, points from `free_cloud_in` as misses, and hits take precedence when both clouds contain the same voxel.
+
 
 ## 3.1.2 Published Topics
 
@@ -80,6 +84,14 @@ Resolution in meter (voxel_size) for the map when starting with an empty map.
 `~base_frame_id (string, default: base_footprint)`
 
 The robot's base frame.
+
+`~use_separate_free_cloud (bool, default: false)`
+
+Synchronize `cloud_in` with `free_cloud_in` and use the latter only for clearing. When disabled, `cloud_in` provides both occupied hits and free-space rays.
+
+`~cloud_sync_queue_size (int, default: 100)`
+
+Number of messages retained from each input while synchronizing separate hit and free clouds. This must cover the point cloud filter's processing latency.
 
 `~sensor_model/max_range (float, default: -1 (unlimited))`
 
