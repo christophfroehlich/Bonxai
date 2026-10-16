@@ -1,5 +1,6 @@
 #include "bonxai_server.hpp"
 
+#include <lifecycle_msgs/msg/state.hpp>
 #include <rclcpp/version.h>
 
 namespace {
@@ -18,7 +19,7 @@ bool update_param(const std::vector<rclcpp::Parameter>& p, const std::string& na
 
 namespace bonxai_server {
 BonxaiServer::BonxaiServer(const rclcpp::NodeOptions& node_options)
-    : Node("bonxai_server_node", node_options) {
+  : LifecycleNode("bonxai_server_node", node_options) {
   using std::placeholders::_1;
   using std::placeholders::_2;
 
@@ -124,9 +125,40 @@ BonxaiServer::BonxaiServer(const rclcpp::NodeOptions& node_options)
   tf2_buffer_->setCreateTimerInterface(timer_interface);
   tf2_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
 
-  using std::chrono_literals::operator""s;
   use_separate_free_cloud_ = declare_parameter("use_separate_free_cloud", false);
-  const int64_t cloud_sync_queue_size = declare_parameter("cloud_sync_queue_size", 100);
+  cloud_sync_queue_size_ = declare_parameter("cloud_sync_queue_size", 100);
+
+  reset_srv_ =
+      create_service<ResetSrv>("~/reset", std::bind(&BonxaiServer::resetSrv, this, _1, _2));
+
+  // set parameter callback
+  set_param_res_ =
+      this->add_on_set_parameters_callback(std::bind(&BonxaiServer::onParameter, this, _1));
+
+  CallbackReturn transition_result;
+  configure(transition_result);
+  if (transition_result != CallbackReturn::SUCCESS) {
+    RCLCPP_ERROR(get_logger(), "Failed to auto-configure Bonxai lifecycle node");
+    return;
+  }
+  activate(transition_result);
+  if (transition_result != CallbackReturn::SUCCESS) {
+    RCLCPP_ERROR(get_logger(), "Failed to auto-activate Bonxai lifecycle node");
+  }
+}
+
+BonxaiServer::CallbackReturn BonxaiServer::on_configure(const rclcpp_lifecycle::State&) {
+  RCLCPP_INFO(get_logger(), "Configured Bonxai lifecycle node");
+  return CallbackReturn::SUCCESS;
+}
+
+BonxaiServer::CallbackReturn BonxaiServer::on_activate(
+    const rclcpp_lifecycle::State& previous_state) {
+  const auto result = rclcpp_lifecycle::LifecycleNode::on_activate(previous_state);
+  if (result != CallbackReturn::SUCCESS) {
+    return result;
+  }
+
 #if RCLCPP_VERSION_GTE(29, 0, 0)
   // Kilted, Rolling's message_filters::Subscriber allows to take an rclcpp::QoS directly.
   point_cloud_sub_.subscribe(this, "cloud_in", rclcpp::SensorDataQoS());
@@ -144,27 +176,42 @@ BonxaiServer::BonxaiServer(const rclcpp::NodeOptions& node_options)
   if (use_separate_free_cloud_) {
     RCLCPP_INFO(
         get_logger(), "Using separate hit and free clouds with synchronization queue size %ld",
-        cloud_sync_queue_size);
+      cloud_sync_queue_size_);
     cloud_sync_ = std::make_shared<message_filters::Synchronizer<CloudSyncPolicy>>(
-        CloudSyncPolicy(cloud_sync_queue_size), point_cloud_sub_, free_point_cloud_sub_);
+      CloudSyncPolicy(cloud_sync_queue_size_), point_cloud_sub_, free_point_cloud_sub_);
     cloud_sync_->registerCallback(&BonxaiServer::insertCloudsCallback, this);
   } else {
     tf_point_cloud_sub_ = std::make_shared<tf2_ros::MessageFilter<PointCloud2>>(
         point_cloud_sub_, *tf2_buffer_, world_frame_id_, 5, this->get_node_logging_interface(),
-        this->get_node_clock_interface(), 5s);
+      this->get_node_clock_interface(), std::chrono::seconds(5));
 
     tf_point_cloud_sub_->registerCallback(&BonxaiServer::insertCloudCallback, this);
   }
 
-  reset_srv_ =
-      create_service<ResetSrv>("~/reset", std::bind(&BonxaiServer::resetSrv, this, _1, _2));
+  RCLCPP_INFO(get_logger(), "Activated Bonxai lifecycle node");
+  return CallbackReturn::SUCCESS;
+}
 
-  // set parameter callback
-  set_param_res_ =
-      this->add_on_set_parameters_callback(std::bind(&BonxaiServer::onParameter, this, _1));
+BonxaiServer::CallbackReturn BonxaiServer::on_deactivate(
+    const rclcpp_lifecycle::State& previous_state) {
+  tf_point_cloud_sub_.reset();
+  cloud_sync_.reset();
+  point_cloud_sub_.unsubscribe();
+  free_point_cloud_sub_.unsubscribe();
+
+  RCLCPP_INFO(get_logger(), "Deactivated Bonxai lifecycle node");
+  return rclcpp_lifecycle::LifecycleNode::on_deactivate(previous_state);
+}
+
+bool BonxaiServer::isActive() const {
+  return get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE;
 }
 
 void BonxaiServer::insertCloudCallback(const PointCloud2::ConstSharedPtr cloud) {
+  if (!isActive()) {
+    return;
+  }
+
   const auto start_time = rclcpp::Clock{}.now();
 
   PCLPointCloud pc;  // input cloud for filtering and ground-detection
@@ -214,6 +261,10 @@ void BonxaiServer::insertCloudCallback(const PointCloud2::ConstSharedPtr cloud) 
 
 void BonxaiServer::insertCloudsCallback(
     const PointCloud2::ConstSharedPtr hit_cloud, const PointCloud2::ConstSharedPtr free_cloud) {
+  if (!isActive()) {
+    return;
+  }
+
   const auto start_time = rclcpp::Clock{}.now();
 
   if (hit_cloud->header.frame_id != free_cloud->header.frame_id) {
@@ -314,6 +365,10 @@ rcl_interfaces::msg::SetParametersResult BonxaiServer::onParameter(
 }
 
 void BonxaiServer::publishAll(const rclcpp::Time& rostime) {
+  if (!isActive()) {
+    return;
+  }
+
   const auto start_time = rclcpp::Clock{}.now();
   thread_local std::vector<Eigen::Vector3d> bonxai_result;
   bonxai_result.clear();
@@ -351,6 +406,11 @@ void BonxaiServer::publishAll(const rclcpp::Time& rostime) {
 
 bool BonxaiServer::resetSrv(
     const std::shared_ptr<ResetSrv::Request>, const std::shared_ptr<ResetSrv::Response>) {
+  if (!isActive()) {
+    RCLCPP_WARN(get_logger(), "Ignoring map reset while Bonxai lifecycle node is inactive");
+    return true;
+  }
+
   const auto rostime = now();
   bonxai_ = std::make_unique<BonxaiT>(res_);
 

@@ -48,6 +48,8 @@ ros2 launch bonxai_ros bonxai_mapping.launch.py
 
 Bonxai_server builds and distributes volumetric 3D occupancy maps for obstacle avoidance, planning or visualization. The map is incrementally built from incoming range data (as PointCloud2) either from RGBD cameras or LiDARs.
 
+The server is a lifecycle node that configures and activates itself at startup. Cloud subscriptions exist only in the active state, so deactivating the node pauses map updates. Activating it again restores the subscriptions and resumes updates without clearing the map.
+
 ## 3.1.1 Subscribed Topics
 
  `cloud_in (sensor_msgs/msg/PointCloud2)`

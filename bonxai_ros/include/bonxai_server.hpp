@@ -19,7 +19,8 @@
 #include "message_filters/sync_policies/exact_time.hpp"
 #include "message_filters/synchronizer.hpp"
 #include "pcl_conversions/pcl_conversions.h"
-#include "rclcpp/rclcpp.hpp"
+#include "rclcpp_lifecycle/lifecycle_node.hpp"
+#include "rclcpp_lifecycle/lifecycle_publisher.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "std_msgs/msg/color_rgba.hpp"
 #include "std_srvs/srv/empty.hpp"
@@ -33,7 +34,7 @@ namespace bonxai_server {
 
 using sensor_msgs::msg::PointCloud2;
 
-class BonxaiServer : public rclcpp::Node {
+class BonxaiServer : public rclcpp_lifecycle::LifecycleNode {
  public:
   using PCLPoint = pcl::PointXYZ;
   using PCLPointCloud = pcl::PointCloud<pcl::PointXYZ>;
@@ -51,16 +52,24 @@ class BonxaiServer : public rclcpp::Node {
       const PointCloud2::ConstSharedPtr hit_cloud, const PointCloud2::ConstSharedPtr free_cloud);
 
  protected:
+    using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
+
+    CallbackReturn on_configure(const rclcpp_lifecycle::State& previous_state) override;
+    CallbackReturn on_activate(const rclcpp_lifecycle::State& previous_state) override;
+    CallbackReturn on_deactivate(const rclcpp_lifecycle::State& previous_state) override;
+
   virtual void publishAll(const rclcpp::Time& rostime);
+
+    bool isActive() const;
 
   OnSetParametersCallbackHandle::SharedPtr set_param_res_;
 
   rcl_interfaces::msg::SetParametersResult onParameter(
       const std::vector<rclcpp::Parameter>& parameters);
 
-  rclcpp::Publisher<PointCloud2>::SharedPtr point_cloud_pub_;
-  message_filters::Subscriber<PointCloud2> point_cloud_sub_;
-  message_filters::Subscriber<PointCloud2> free_point_cloud_sub_;
+    rclcpp_lifecycle::LifecyclePublisher<PointCloud2>::SharedPtr point_cloud_pub_;
+  message_filters::Subscriber<PointCloud2, rclcpp_lifecycle::LifecycleNode> point_cloud_sub_;
+  message_filters::Subscriber<PointCloud2, rclcpp_lifecycle::LifecycleNode> free_point_cloud_sub_;
   std::shared_ptr<tf2_ros::MessageFilter<PointCloud2>> tf_point_cloud_sub_;
   using CloudSyncPolicy = message_filters::sync_policies::ExactTime<PointCloud2, PointCloud2>;
   std::shared_ptr<message_filters::Synchronizer<CloudSyncPolicy>> cloud_sync_;
@@ -74,6 +83,7 @@ class BonxaiServer : public rclcpp::Node {
 
   double max_range_;
   bool use_separate_free_cloud_;
+    int64_t cloud_sync_queue_size_;
   std::string world_frame_id_;  // the map frame
   std::string base_frame_id_;   // base of the robot for ground plane filtering
 
