@@ -101,7 +101,10 @@ Maximum range in meter for inserting point cloud data when dynamically building 
 
 `~sensor_model/[hit|miss] (float, default: 0.7 / 0.4)`
 
-Probabilities for hits and misses in the sensor model when dynamically building a map
+Probabilities for hits and misses in the sensor model when dynamically building a map. A hit
+probability above `0.5` increases occupancy for endpoint voxels; values closer to `1.0` provide
+stronger occupied evidence. A miss probability below `0.5` decreases occupancy for voxels along
+the sensor ray; values closer to `0.0` provide stronger free-space evidence. `0.5` is neutral.
 
 `~sensor_model/[min|max] (float, default: 0.12 / 0.97)`
 
