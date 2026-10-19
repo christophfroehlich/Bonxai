@@ -1,7 +1,8 @@
 #include "bonxai_server.hpp"
 
-#include <lifecycle_msgs/msg/state.hpp>
 #include <rclcpp/version.h>
+
+#include <lifecycle_msgs/msg/state.hpp>
 
 namespace {
 template <typename T>
@@ -19,7 +20,7 @@ bool update_param(const std::vector<rclcpp::Parameter>& p, const std::string& na
 
 namespace bonxai_server {
 BonxaiServer::BonxaiServer(const rclcpp::NodeOptions& node_options)
-  : LifecycleNode("bonxai_server_node", node_options) {
+    : LifecycleNode("bonxai_server_node", node_options) {
   using std::placeholders::_1;
   using std::placeholders::_2;
 
@@ -176,14 +177,14 @@ BonxaiServer::CallbackReturn BonxaiServer::on_activate(
   if (use_separate_free_cloud_) {
     RCLCPP_INFO(
         get_logger(), "Using separate hit and free clouds with synchronization queue size %ld",
-      cloud_sync_queue_size_);
+        cloud_sync_queue_size_);
     cloud_sync_ = std::make_shared<message_filters::Synchronizer<CloudSyncPolicy>>(
-      CloudSyncPolicy(cloud_sync_queue_size_), point_cloud_sub_, free_point_cloud_sub_);
+        CloudSyncPolicy(cloud_sync_queue_size_), point_cloud_sub_, free_point_cloud_sub_);
     cloud_sync_->registerCallback(&BonxaiServer::insertCloudsCallback, this);
   } else {
     tf_point_cloud_sub_ = std::make_shared<tf2_ros::MessageFilter<PointCloud2>>(
         point_cloud_sub_, *tf2_buffer_, world_frame_id_, 5, this->get_node_logging_interface(),
-      this->get_node_clock_interface(), std::chrono::seconds(5));
+        this->get_node_clock_interface(), std::chrono::seconds(5));
 
     tf_point_cloud_sub_->registerCallback(&BonxaiServer::insertCloudCallback, this);
   }
@@ -412,7 +413,9 @@ bool BonxaiServer::resetSrv(
   }
 
   const auto rostime = now();
+  const auto options = bonxai_->options();
   bonxai_ = std::make_unique<BonxaiT>(res_);
+  bonxai_->setOptions(options);
 
   RCLCPP_INFO(get_logger(), "Cleared Bonxai");
   publishAll(rostime);

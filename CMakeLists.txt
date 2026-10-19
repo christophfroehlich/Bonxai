@@ -118,6 +118,12 @@ if ( ament_cmake_FOUND )
       EXECUTABLE bonxai_server_node
     )
 
+    if(BUILD_TESTING)
+      find_package(ament_cmake_gtest REQUIRED)
+      ament_add_gtest(bonxai_server_test bonxai_ros/test/bonxai_server_test.cpp)
+      target_link_libraries(bonxai_server_test bonxai_server)
+    endif()
+
     # bonxai_core/bonxai_map are plain CMake targets; export them so other ament
     # packages in the workspace can link the probabilistic map
     install(
