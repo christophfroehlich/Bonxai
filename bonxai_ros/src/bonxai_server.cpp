@@ -204,7 +204,7 @@ BonxaiServer::CallbackReturn BonxaiServer::on_deactivate(
   return rclcpp_lifecycle::LifecycleNode::on_deactivate(previous_state);
 }
 
-bool BonxaiServer::isActive() const {
+bool BonxaiServer::isActive() {
   return get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE;
 }
 

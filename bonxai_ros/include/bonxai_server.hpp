@@ -60,7 +60,7 @@ class BonxaiServer : public rclcpp_lifecycle::LifecycleNode {
 
   virtual void publishAll(const rclcpp::Time& rostime);
 
-    bool isActive() const;
+    bool isActive();
 
   OnSetParametersCallbackHandle::SharedPtr set_param_res_;
 
